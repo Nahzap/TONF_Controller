@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+reports/
+firmware/
+
+# Solo README.md entra al repositorio. El resto de la documentación se queda en la máquina.
+Docs/
+*.md
+!/README.md

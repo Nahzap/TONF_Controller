@@ -1,0 +1,254 @@
+# Banco TONF — señales de los cinco motores.
+# Guía: Docs/2026-10-05_1646_guia-suite-motores.md
+#
+# Lo que la suite ENVÍA a la placa está marcado "en vivo".
+# Lo demás queda escrito para quien hereda el banco: la suite no lo reprograma.
+
+[enlace]
+puerto = "COM3"
+baud = 115200
+# Abrir el COM reinicia el LPC1769 (DTR). Esta espera deja pasar el arranque.
+espera_apertura_s = 1.0
+
+[alimentacion]
+vmot_v = 12.0
+# 5V SEL unido +5V con VDD: la lógica sale de la fuente. El USB solo lleva datos.
+logica = "+5V–VDD"
+# Tope de protección. La suite se niega a arrancar si alguna corriente lo pasa.
+techo_ma = 800
+
+[seguridad]
+# Esta suite no tiene rutina de home. true sería un error, no un G28.
+home = false
+# Los termistores están en modo ficticio (25 °C). No hay que encender calentadores.
+calentar = false
+
+[maquina]
+nombre = "TONF SKR"
+firmware = "Marlin 2.1.2"
+placa = "BTT SKR V1.4 Turbo"
+mcu = "LPC1769"
+# en vivo: M500 después de corriente, avance, pasos y stealthChop.
+guardar_eeprom = true
+# en vivo: M302. true permite mover E con el hotend frío.
+extrusion_en_frio = true
+extrusion_min_c = 170
+# Un solo avance de E no puede pasar esto (EXTRUDE_MAXLENGTH compilado).
+extrusion_max_mm = 435
+# en vivo: M412. false lo deja apagado. El pin filamento lee TRIGGERED y no debe frenar E.
+sensor_filamento = false
+# en vivo: G92. Deja el eje dentro de la caja de software antes del movimiento relativo.
+origen_mm = 150.0
+# HOLD_MULTIPLIER compilado. La corriente de reposo es este factor de la de marcha.
+retencion = 0.5
+# Chopper compilado para la fuente de 12 V. No lo cambia la suite.
+chopper = "CHOPPER_DEFAULT_12V"
+# ENABLE de los cinco zócalos es activo en bajo. Lo define el firmware.
+enable_activo_bajo = true
+# Orden del plug del motor, mirando el zócalo: 1B 1A 2A 2B.
+plug = "1B 1A 2A 2B"
+soltar_al_final = true
+# T0 al cerrar. -1 no cambia la herramienta.
+herramienta_al_final = 0
+
+[avances_maximos_mm_s]
+# en vivo: M203. Unidad mm/s. Los avances de cada movimiento van en mm/min (letra F).
+X = 100
+Y = 100
+Z = 20
+E = 25
+
+[limites_mm]
+# Caja de software compilada. La suite no manda un canal cartesiano que se salga.
+X = [4.0, 319.0]
+Y = [2.0, 306.0]
+Z = [0.0, 400.0]
+
+[tiempos]
+consulta_s = 3
+guardar_s = 4
+driver_s = 6
+
+# ---------------------------------------------------------------------------
+# Secuencia en vacío. La misma que ya corrió cada motor: ida y vuelta,
+# sin home. Un canal puede apuntar a otra secuencia con su campo `secuencia`.
+# distancia_mm es el tramo ANTES de aplicar `sentido` del canal.
+# avance_mm_min es la F de Marlin (mm/min). espera_* son segundos de la suite.
+# ---------------------------------------------------------------------------
+
+[[secuencia.vacio.movimientos]]
+distancia_mm = 10
+avance_mm_min = 300
+espera_comando_s = 5
+espera_fin_s = 20
+
+[[secuencia.vacio.movimientos]]
+distancia_mm = -10
+avance_mm_min = 300
+espera_comando_s = 5
+espera_fin_s = 20
+
+[[secuencia.vacio.movimientos]]
+distancia_mm = 40
+avance_mm_min = 600
+espera_comando_s = 5
+espera_fin_s = 25
+
+[[secuencia.vacio.movimientos]]
+distancia_mm = -40
+avance_mm_min = 600
+espera_comando_s = 5
+espera_fin_s = 25
+
+[[secuencia.vacio.movimientos]]
+distancia_mm = 40
+avance_mm_min = 1800
+espera_comando_s = 5
+espera_fin_s = 20
+
+[[secuencia.vacio.movimientos]]
+distancia_mm = -40
+avance_mm_min = 1800
+espera_comando_s = 5
+espera_fin_s = 20
+
+# ---------------------------------------------------------------------------
+# Canales, en el orden en que la suite los mueve.
+# sentido = 1 conserva el signo de la secuencia. sentido = -1 lo invierte.
+# sigilo = true es stealthChop (M569 S1). false es spreadCycle (M569 S0).
+# dir_invertido_compilado copia INVERT_*_DIR del firmware. Cambiarlo aquí
+# no da vuelta el pin DIR: hay que editar Configuration.h y volver a grabar,
+# o usar `sentido` para invertir solo los movimientos de la suite.
+# micropasos e interpolar están compilados. La suite no manda M350.
+# rsense_compilado_ohm es el valor del fuente. El módulo BTT mide 0,11 Ω.
+# Si los dos números no coinciden, el mA de M906 no es la corriente real de bobina.
+# ---------------------------------------------------------------------------
+
+[canales.X]
+orden = 1
+activo = true
+secuencia = "vacio"
+modelo = "Sin nombre de catálogo"
+nota = "Se dejó en 450 mA. En el banco el motor se movió en el rango de 400 a 500 mA."
+letra = "X"
+corriente_ma = 450
+pasos_por_mm = 80
+micropasos = 16
+grados_por_paso = 1.8
+sentido = 1
+sigilo = true
+dir_invertido_compilado = true
+driver = "TMC2209"
+uart_direccion = 0
+rsense_modulo_ohm = 0.11
+rsense_compilado_ohm = 0.0
+interpolar = true
+step = "P2.02"
+dir = "P2.06"
+enable = "P2.01"
+uart = "P1.10"
+diag = "P1.29 X-STOP"
+
+[canales.Y]
+orden = 2
+activo = true
+secuencia = "vacio"
+modelo = "CF3925-100-SL"
+nota = "Sin corriente de catálogo. El tope de protección es 800 mA. El cálculo de vueltas supone 1,8 ° y 16 micropasos."
+letra = "Y"
+corriente_ma = 800
+pasos_por_mm = 80
+micropasos = 16
+grados_por_paso = 1.8
+sentido = 1
+sigilo = true
+dir_invertido_compilado = true
+driver = "TMC2209"
+uart_direccion = 0
+rsense_modulo_ohm = 0.11
+rsense_compilado_ohm = 0.062
+interpolar = true
+step = "P0.19"
+dir = "P0.20"
+enable = "P2.08"
+uart = "P1.09"
+diag = "P1.28 Y-STOP"
+
+[canales.Z]
+orden = 3
+activo = true
+secuencia = "vacio"
+modelo = "SY42STH38-1684A"
+nota = "En el banco se nombró SY52STH38 1684A. El catálogo de 1,68 A por fase es SY42STH38-1684A. La suite no pasa de 800 mA."
+letra = "Z"
+corriente_nominal_ma = 1680
+corriente_ma = 800
+pasos_por_mm = 400
+micropasos = 16
+grados_por_paso = 1.8
+sentido = 1
+sigilo = true
+dir_invertido_compilado = false
+driver = "TMC2209"
+uart_direccion = 0
+rsense_modulo_ohm = 0.11
+rsense_compilado_ohm = 0.062
+interpolar = true
+step = "P0.22"
+dir = "P2.11"
+enable = "P0.21"
+uart = "P1.08"
+diag = "P1.27 Z-STOP"
+
+[canales.E0]
+orden = 4
+activo = true
+secuencia = "vacio"
+modelo = "SY42STH38-1684A"
+nota = "Mismo motor que Z. En Marlin este canal es el extrusor 0: los movimientos van con T0 y la letra E."
+letra = "E"
+herramienta = 0
+corriente_nominal_ma = 1680
+corriente_ma = 800
+pasos_por_mm = 95
+micropasos = 16
+grados_por_paso = 1.8
+sentido = 1
+sigilo = true
+dir_invertido_compilado = true
+driver = "TMC2209"
+uart_direccion = 0
+rsense_modulo_ohm = 0.11
+rsense_compilado_ohm = 0.062
+interpolar = true
+step = "P2.13"
+dir = "P0.11"
+enable = "P2.12"
+uart = "P1.04"
+diag = "P1.26 E0DET"
+
+[canales.E1]
+orden = 5
+activo = true
+secuencia = "vacio"
+modelo = "CF3925-100-SL"
+nota = "Mismo modelo que Y. En la prueba del 5 de octubre el driver marcó carga abierta en la bobina A (ola). Si el eje no gira parejo, revisar el plug."
+letra = "E"
+herramienta = 1
+corriente_ma = 800
+pasos_por_mm = 95
+micropasos = 16
+grados_por_paso = 1.8
+sentido = 1
+sigilo = true
+dir_invertido_compilado = false
+driver = "TMC2209"
+uart_direccion = 0
+rsense_modulo_ohm = 0.11
+rsense_compilado_ohm = 0.11
+interpolar = true
+step = "P1.15"
+dir = "P1.14"
+enable = "P1.16"
+uart = "P1.01"
+diag = "P1.25 E1DET"

@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.exclude": {
+			"**/.pytest_cache": true,
+			"**/.venv": true,
+			"**/__pycache__": true,
+			"**/*.egg-info": true
+		}
+	}
+}

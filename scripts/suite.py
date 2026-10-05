@@ -14,4 +14,6 @@ from tonf.__main__ import main
 
 
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     raise SystemExit(main(["suite", *sys.argv[1:]]))

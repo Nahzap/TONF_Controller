@@ -8,6 +8,7 @@ Uso, desde D:\\TONF_Controller:
     .\\.venv\\Scripts\\python.exe .\\scripts\\prueba_motor_z.py
 """
 
+import sys
 import time
 
 import serial
@@ -24,32 +25,53 @@ def transact(port: serial.Serial, command: str, timeout: float) -> str:
     port.write((command + "\n").encode("ascii"))
     port.flush()
     end = time.time() + timeout
-    chunks = []
+    chunks: list[bytes] = []
+    shown = 0
+
+    def text() -> str:
+        return b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
+
+    def emit(final: bool) -> None:
+        nonlocal shown
+        body = text()
+        limit = len(body) if final else body.rfind("\n") + 1
+        if limit <= shown:
+            return
+        chunk = body[shown:limit]
+        shown = limit
+        print(chunk, end="" if chunk.endswith("\n") else "\n", flush=True)
+
     while time.time() < end:
         block = port.read(4096)
         if not block:
-            text = b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
-            if _accepted(text):
+            if _accepted(text()):
                 break
             continue
         chunks.append(block)
-        text = b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
-        if _accepted(text):
+        emit(False)
+        if _accepted(text()):
             time.sleep(0.05)
             extra = port.read(4096)
             if extra:
                 chunks.append(extra)
+                emit(False)
             break
-    return b"".join(chunks).decode("utf-8", "replace").replace("\r", "").strip()
+    emit(True)
+    return text().strip()
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+    print(f"Prueba en {PORT} a {BAUD} baudios.", flush=True)
+    print("Abriendo el puerto. Eso reinicia la placa.", flush=True)
     port = serial.Serial(PORT, BAUD, timeout=0.3, write_timeout=2)
     time.sleep(1.0)
     port.reset_input_buffer()
     steps = [
         ("M114", 3),
         ("M906 Z800", 3),
+        ("M914 Z100", 3),
         ("M500", 4),
         ("M906", 3),
         ("G90", 3),
@@ -70,15 +92,17 @@ def main() -> None:
         ("G90", 3),
         ("M114", 3),
         ("M122", 6),
+        ("M914", 3),
         ("M119", 3),
         ("M18", 3),
     ]
     for command, timeout in steps:
+        print(f"\n===== {command} =====", flush=True)
         body = transact(port, command, timeout)
-        print(f"\n===== {command} =====")
-        print(body or "(sin respuesta)")
+        if not body:
+            print("(sin respuesta)", flush=True)
         if "Unknown command" in body or body.startswith("Error"):
-            print("DETENIDO")
+            print("DETENIDO", flush=True)
             break
     port.close()
 

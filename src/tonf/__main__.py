@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
 _FIRMWARE = """\
 La placa corre Marlin 2.1.2, máquina «TONF SKR», compilado el 5 de octubre de 2026.
 Puerto COM3, 115200 baudios. Identidad: M115.
-Cinco drivers TMC2209: X, Y, Z, E0 y E1. Las señales que se editan están en config/banco.toml.
+Cinco drivers TMC2209: X, Y, Z, E0 y E1. E0 es T0 y E1 es T1; los dos se mueven con la letra E. Las señales están en config/banco.toml.
 La guía de uso es Docs/2026-10-05_1646_guia-suite-motores.md.
 
 tonf suite aplica ese archivo y mueve los canales en orden.

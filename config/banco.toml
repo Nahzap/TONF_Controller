@@ -1,5 +1,6 @@
 # Banco TONF — señales de los cinco motores.
-# Guía: Docs/2026-10-05_1646_guia-suite-motores.md
+# Nota de avance: Docs/2026-10-05_1825_avances-suite-terminal.md
+# El manual de operación publicado es README.md.
 #
 # Lo que la suite ENVÍA a la placa está marcado "en vivo".
 # Lo demás queda escrito para quien hereda el banco: la suite no lo reprograma.
@@ -30,12 +31,12 @@ placa = "BTT SKR V1.4 Turbo"
 mcu = "LPC1769"
 # en vivo: M500 después de corriente, avance, pasos y stealthChop.
 guardar_eeprom = true
-# en vivo: M302. true permite mover E con el hotend frío.
+# en vivo: M302. true permite mover E0 y E1 con el hotend frío.
 extrusion_en_frio = true
 extrusion_min_c = 170
 # Un solo avance de E no puede pasar esto (EXTRUDE_MAXLENGTH compilado).
 extrusion_max_mm = 435
-# en vivo: M412. false lo deja apagado. El pin filamento lee TRIGGERED y no debe frenar E.
+# en vivo: M412. false lo deja apagado. El pin filamento lee TRIGGERED y no debe frenar E0 ni E1.
 sensor_filamento = false
 # en vivo: G92. Deja el eje dentro de la caja de software antes del movimiento relativo.
 origen_mm = 150.0
@@ -48,7 +49,7 @@ enable_activo_bajo = true
 # Orden del plug del motor, mirando el zócalo: 1B 1A 2A 2B.
 plug = "1B 1A 2A 2B"
 soltar_al_final = true
-# T0 al cerrar. -1 no cambia la herramienta.
+# T0 al cerrar: deja seleccionado E0. -1 no manda T.
 herramienta_al_final = 0
 
 [avances_maximos_mm_s]
@@ -137,6 +138,7 @@ micropasos = 16
 grados_por_paso = 1.8
 sentido = 1
 sigilo = true
+sensibilidad_stall = 100
 dir_invertido_compilado = true
 driver = "TMC2209"
 uart_direccion = 0
@@ -162,6 +164,7 @@ micropasos = 16
 grados_por_paso = 1.8
 sentido = 1
 sigilo = true
+sensibilidad_stall = 100
 dir_invertido_compilado = true
 driver = "TMC2209"
 uart_direccion = 0
@@ -188,6 +191,7 @@ micropasos = 16
 grados_por_paso = 1.8
 sentido = 1
 sigilo = true
+sensibilidad_stall = 100
 dir_invertido_compilado = false
 driver = "TMC2209"
 uart_direccion = 0
@@ -205,7 +209,7 @@ orden = 4
 activo = true
 secuencia = "vacio"
 modelo = "SY42STH38-1684A"
-nota = "Mismo motor que Z. En Marlin este canal es el extrusor 0: los movimientos van con T0 y la letra E."
+nota = "Mismo motor que Z. Este canal es E0: herramienta T0 y letra E."
 letra = "E"
 herramienta = 0
 corriente_nominal_ma = 1680
@@ -215,6 +219,7 @@ micropasos = 16
 grados_por_paso = 1.8
 sentido = 1
 sigilo = true
+sensibilidad_stall = 100
 dir_invertido_compilado = true
 driver = "TMC2209"
 uart_direccion = 0
@@ -232,7 +237,7 @@ orden = 5
 activo = true
 secuencia = "vacio"
 modelo = "CF3925-100-SL"
-nota = "Mismo modelo que Y. En la prueba del 5 de octubre el driver marcó carga abierta en la bobina A (ola). Si el eje no gira parejo, revisar el plug."
+nota = "Mismo modelo que Y. Este canal es E1: herramienta T1 y letra E. En la prueba del 5 de octubre el driver marcó carga abierta en la bobina A (ola). Si el eje no gira parejo, revisar el plug."
 letra = "E"
 herramienta = 1
 corriente_ma = 800
@@ -241,6 +246,7 @@ micropasos = 16
 grados_por_paso = 1.8
 sentido = 1
 sigilo = true
+sensibilidad_stall = 100
 dir_invertido_compilado = false
 driver = "TMC2209"
 uart_direccion = 0

@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from tonf.banco import ConfigError, build, execute, load_path, replace_channel
+from tonf.banco import ConfigError, Step, build, execute, load_path, replace_channel
 from tonf.__main__ import main
 
 ROOT_CONFIG = load_path()
@@ -40,17 +40,20 @@ def test_el_protocolo_de_x_sale_igual_que_la_prueba_en_vacio():
         "M400",
         "M114",
         "M122",
+        "M914",
         "M119",
     ]
 
 
-def test_los_extrusores_se_direccionan_con_t_y_no_con_e_pelado():
+def test_e0_y_e1_se_mueven_con_su_nombre():
     commands = _commands(build(ROOT_CONFIG))
     assert "M906 T0 E800" in commands
     assert "M906 T1 E800" in commands
     assert "M906 E800" not in commands
     assert _commands(build(ROOT_CONFIG), "E0")[:3] == ["T0", "M83", "G92 E150"]
     assert _commands(build(ROOT_CONFIG), "E1")[:3] == ["T1", "M83", "G92 E150"]
+    assert "G1 E10 F300" in _commands(build(ROOT_CONFIG), "E0")
+    assert "G1 E10 F300" in _commands(build(ROOT_CONFIG), "E1")
     assert commands[-3:] == ["G90", "T0", "M18"]
 
 
@@ -59,6 +62,11 @@ def test_la_suite_no_homea_ni_calienta():
     assert not any(command.split()[0] in {"G28", "M104", "M109", "M140", "M190"} for command in commands)
     assert "M203 X100 Y100 Z20 E25" in commands
     assert "M92 X80 Y80 Z400 E95" in commands
+    assert "M914 X100" in commands
+    assert "M914 Y100" in commands
+    assert "M914 Z100" in commands
+    assert "M914 T0 E100" in commands
+    assert "M914 T1 E100" in commands
     assert "M302 S0" in commands
     assert "M412 S0" in commands
 
@@ -123,6 +131,29 @@ def test_un_error_de_la_placa_suelta_los_motores():
     program = build(ROOT_CONFIG, "X")
     assert execute(port, program.steps[:3], settle_s=0) == 1
     assert port.written[-1] == "M18\n"
+
+
+def test_cada_comando_se_anuncia_y_su_respuesta_sale_en_la_terminal(capsys):
+    class Port:
+        def __init__(self):
+            self.pending = b""
+
+        def write(self, data: bytes) -> int:
+            self.pending = b"echo:busy: processing\nok\n"
+            return len(data)
+
+        def flush(self) -> None:
+            return None
+
+        def read(self, _size: int) -> bytes:
+            data, self.pending = self.pending, b""
+            return data
+
+    assert execute(Port(), [Step("M400", 1, "X")], settle_s=0) == 0
+    output = capsys.readouterr().out
+    assert output.index("----- X -----") < output.index("===== M400 =====")
+    assert output.index("===== M400 =====") < output.index("echo:busy: processing")
+    assert "ok" in output
 
 
 def test_listar_no_necesita_la_placa(capsys):

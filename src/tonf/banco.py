@@ -6,6 +6,7 @@ movimientos de cada canal. No homea y no enciende calentadores.
 
 from __future__ import annotations
 
+import sys
 import time
 import tomllib
 from dataclasses import dataclass, replace
@@ -41,6 +42,7 @@ class Channel:
     grados_por_paso: float
     sentido: int
     sigilo: bool
+    sensibilidad_stall: int
     dir_invertido_compilado: bool
     driver: str
     uart_direccion: int
@@ -108,6 +110,8 @@ class Program:
 
 
 _CARTESIAN = frozenset({"X", "Y", "Z"})
+_LINEAR = ("X", "Y", "Z")
+_FEED_AXES = ("X", "Y", "Z", "E")
 _FORBIDDEN = ("G28", "M104", "M109", "M140", "M190")
 
 
@@ -195,10 +199,13 @@ def describe(bench: Bench, only: str | None = None) -> str:
         lines.append(
             f"  Sentido de la prueba: {channel.sentido:+d}   "
             f"StealthChop: {'sí' if channel.sigilo else 'no'}   "
+            f"StallGuard: {channel.sensibilidad_stall}   "
             f"DIR compilado: {'invertido' if channel.dir_invertido_compilado else 'directo'}"
         )
-        if channel.herramienta is not None:
-            lines.append(f"  Herramienta Marlin: T{channel.herramienta}  letra {channel.letra}")
+        if channel.letra == "E" and channel.herramienta is not None:
+            lines.append(f"  Nombre: {channel.id}  herramienta T{channel.herramienta}  letra E")
+        else:
+            lines.append(f"  Letra G-code: {channel.letra}")
         lines.append(
             f"  Driver {channel.driver}  UART {channel.uart_direccion}  "
             f"Rsense módulo {_num(channel.rsense_modulo_ohm)} Ω  "
@@ -240,27 +247,48 @@ def shaft_turns(channel: Channel, distancia_mm: float) -> float:
     return abs(distancia_mm) * channel.pasos_por_mm / steps_per_rev
 
 
+def _live_stdout() -> None:
+    stream = sys.stdout
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(line_buffering=True)
+
+
+def _say(text: str = "") -> None:
+    print(text, flush=True)
+
+
 def execute(port, steps: tuple[Step, ...] | list[Step], settle_s: float = 0.05) -> int:
-    """Manda la lista. Devuelve 0 si toda la lista fue aceptada."""
+    """Manda la lista y escribe cada respuesta en cuanto llega. Devuelve 0 si toda fue aceptada."""
+    _live_stdout()
     failed = False
+    group = ""
     for step in steps:
-        print(f"\n===== {step.group}: {step.command} =====")
+        if step.group != group:
+            group = step.group
+            _say(f"\n----- {group} -----")
+        _say(f"===== {step.command} =====")
         body = transact(port, step.command, step.timeout_s, settle_s)
-        print(body or "(sin respuesta)")
+        if not body:
+            _say("(sin respuesta)")
         if _rejected(body):
-            print("DETENIDO")
+            _say("DETENIDO")
             failed = True
             break
     if failed:
-        print("\n===== cierre: M18 =====")
-        print(transact(port, "M18", 3, settle_s) or "(sin respuesta)")
+        _say("\n===== M18 =====")
+        body = transact(port, "M18", 3, settle_s)
+        if not body:
+            _say("(sin respuesta)")
     return 1 if failed else 0
 
 
 def run(bench: Bench, only: str | None = None) -> int:
     program = build(bench, only)
+    _live_stdout()
+    _say(f"Suite en {bench.puerto} a {bench.baud} baudios.")
     for warning in program.warnings:
-        print(f"Aviso: {warning}")
+        _say(f"Aviso: {warning}")
+    _say(f"Abriendo {bench.puerto}. El puerto reinicia la placa.")
     port = open_port(bench.puerto, bench.baud, bench.espera_apertura_s)
     try:
         return execute(port, program.steps)
@@ -282,23 +310,39 @@ def transact(port, command: str, timeout_s: float, settle_s: float = 0.05) -> st
     port.flush()
     end = time.time() + timeout_s
     chunks: list[bytes] = []
+    shown = 0
+
+    def text() -> str:
+        return b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
+
+    def emit(final: bool) -> None:
+        nonlocal shown
+        body = text()
+        limit = len(body) if final else body.rfind("\n") + 1
+        if limit <= shown:
+            return
+        chunk = body[shown:limit]
+        shown = limit
+        print(chunk, end="" if chunk.endswith("\n") else "\n", flush=True)
+
     while time.time() < end:
         block = port.read(4096)
         if not block:
-            text = b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
-            if _accepted(text):
+            if _accepted(text()):
                 break
             continue
         chunks.append(block)
-        text = b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
-        if _accepted(text):
+        emit(False)
+        if _accepted(text()):
             if settle_s:
                 time.sleep(settle_s)
             extra = port.read(4096)
             if extra:
                 chunks.append(extra)
+                emit(False)
             break
-    return b"".join(chunks).decode("utf-8", "replace").replace("\r", "").strip()
+    emit(True)
+    return text().strip()
 
 
 def replace_channel(bench: Bench, channel_id: str, **changes) -> Bench:
@@ -351,8 +395,8 @@ def _bench(raw: dict, path: Path) -> Bench:
         plug=_text(machine, "plug"),
         soltar_al_final=_bool(machine, "soltar_al_final"),
         herramienta_al_final=_int(machine, "herramienta_al_final", minimum=-1),
-        avances_mm_s={axis: _float(feeds, axis, minimum=0) for axis in ("X", "Y", "Z", "E")},
-        limites_mm={axis: _span(limits, axis) for axis in ("X", "Y", "Z")},
+        avances_mm_s={axis: _float(feeds, axis, minimum=0) for axis in _FEED_AXES},
+        limites_mm={axis: _span(limits, axis) for axis in _LINEAR},
         consulta_s=_float(times, "consulta_s", minimum=0.1),
         guardar_s=_float(times, "guardar_s", minimum=0.1),
         driver_s=_float(times, "driver_s", minimum=0.1),
@@ -406,7 +450,7 @@ def _channels(raw: dict, sequences: dict[str, tuple[Move, ...]]) -> tuple[Channe
         tool = body.get("herramienta")
         if letter == "E":
             if tool is None:
-                raise ConfigError(f"{name}: un extrusor necesita herramienta (0 para E0, 1 para E1).")
+                raise ConfigError(f"{name}: E0 usa herramienta 0 y E1 usa herramienta 1.")
             tool = _int(body, "herramienta", minimum=0)
         elif tool is not None:
             raise ConfigError(f"{name}: un eje cartesiano no lleva herramienta.")
@@ -442,6 +486,7 @@ def _channels(raw: dict, sequences: dict[str, tuple[Move, ...]]) -> tuple[Channe
                 grados_por_paso=_float(body, "grados_por_paso", minimum=0.1),
                 sentido=direction,
                 sigilo=_bool(body, "sigilo"),
+                sensibilidad_stall=_stall(body),
                 dir_invertido_compilado=_bool(body, "dir_invertido_compilado"),
                 driver=_text(body, "driver"),
                 uart_direccion=_int(body, "uart_direccion", minimum=0),
@@ -465,7 +510,7 @@ def _channels(raw: dict, sequences: dict[str, tuple[Move, ...]]) -> tuple[Channe
 def _setup(bench: Bench, channels: tuple[Channel, ...]) -> list[Step]:
     cold = "M302 S0" if bench.extrusion_en_frio else f"M302 S{bench.extrusion_min_c}"
     filament = "M412 S1" if bench.sensor_filamento else "M412 S0"
-    feeds = " ".join(f"{axis}{_num(bench.avances_mm_s[axis])}" for axis in ("X", "Y", "Z", "E"))
+    feeds = " ".join(f"{axis}{_num(bench.avances_mm_s[axis])}" for axis in _FEED_AXES)
     steps = [
         Step("M114", bench.consulta_s, "ajuste"),
         Step(cold, bench.consulta_s, "ajuste"),
@@ -474,6 +519,7 @@ def _setup(bench: Bench, channels: tuple[Channel, ...]) -> list[Step]:
     ]
     steps.extend(Step(_m906(channel), bench.consulta_s, "ajuste") for channel in channels)
     steps.extend(Step(_m569(channel), bench.consulta_s, "ajuste") for channel in channels)
+    steps.extend(Step(_m914(channel), bench.consulta_s, "ajuste") for channel in channels)
     steps.append(Step(_m92(channels), bench.consulta_s, "ajuste"))
     if bench.guardar_eeprom:
         steps.append(Step("M500", bench.guardar_s, "ajuste"))
@@ -482,6 +528,7 @@ def _setup(bench: Bench, channels: tuple[Channel, ...]) -> list[Step]:
             Step("M906", bench.consulta_s, "ajuste"),
             Step("M92", bench.consulta_s, "ajuste"),
             Step("M569", bench.driver_s, "ajuste"),
+            Step("M914", bench.consulta_s, "ajuste"),
         )
     )
     return steps
@@ -492,11 +539,14 @@ def _channel_steps(bench: Bench, channel: Channel) -> list[Step]:
     _require_travel(bench, channel, origin)
     group = channel.id
     steps: list[Step] = []
-    if channel.herramienta is not None:
-        steps.append(Step(f"T{channel.herramienta}", bench.consulta_s, group))
     if channel.letra == "E":
-        steps.append(Step("M83", bench.consulta_s, group))
-        steps.append(Step(f"G92 E{_num(origin)}", bench.consulta_s, group))
+        steps.extend(
+            (
+                Step(f"T{channel.herramienta}", bench.consulta_s, group),
+                Step("M83", bench.consulta_s, group),
+                Step(f"G92 E{_num(origin)}", bench.consulta_s, group),
+            )
+        )
     else:
         steps.extend(
             (
@@ -514,6 +564,7 @@ def _channel_steps(bench: Bench, channel: Channel) -> list[Step]:
         (
             Step("M114", bench.consulta_s, group),
             Step("M122", bench.driver_s, group),
+            Step("M914", bench.consulta_s, group),
             Step("M119", bench.consulta_s, group),
         )
     )
@@ -641,6 +692,19 @@ def _m906(channel: Channel) -> str:
     return f"M906 {channel.letra}{channel.corriente_ma}"
 
 
+def _m914(channel: Channel) -> str:
+    if channel.letra == "E":
+        return f"M914 T{channel.herramienta} E{channel.sensibilidad_stall}"
+    return f"M914 {channel.letra}{channel.sensibilidad_stall}"
+
+
+def _stall(table: dict) -> int:
+    value = _int(table, "sensibilidad_stall", minimum=0)
+    if value > 255:
+        raise ConfigError("sensibilidad_stall tiene que estar entre 0 y 255.")
+    return value
+
+
 def _m569(channel: Channel) -> str:
     bit = 1 if channel.sigilo else 0
     if channel.letra == "E":
@@ -652,7 +716,7 @@ def _m92(channels: tuple[Channel, ...]) -> str:
     values: dict[str, float] = {}
     for channel in channels:
         values[channel.letra] = channel.pasos_por_mm
-    return "M92 " + " ".join(f"{axis}{_num(values[axis])}" for axis in ("X", "Y", "Z", "E") if axis in values)
+    return "M92 " + " ".join(f"{axis}{_num(values[axis])}" for axis in _FEED_AXES if axis in values)
 
 
 def _accepted(text: str) -> bool:

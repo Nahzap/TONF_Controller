@@ -1,13 +1,15 @@
-"""Prueba en vacío del motor de E0 (SY42STH38-1684A). No hace home.
+"""Prueba en vacío del canal E0 (SY42STH38-1684A). No hace home.
 
-El motor admite 1,68 A por fase. La corriente queda en 800 mA, el tope
-de protección. M302 S0 permite mover E con el hotend frío.
+E0 es la herramienta T0 y se mueve con la letra E. La corriente queda
+en 800 mA. M302 S0 permite ese movimiento con el hotend frío.
+StallGuard se escribe con M914 T0 E.
 
 Uso, desde D:\\TONF_Controller:
 
     .\\.venv\\Scripts\\python.exe .\\scripts\\prueba_motor_e0.py
 """
 
+import sys
 import time
 
 import serial
@@ -24,34 +26,56 @@ def transact(port: serial.Serial, command: str, timeout: float) -> str:
     port.write((command + "\n").encode("ascii"))
     port.flush()
     end = time.time() + timeout
-    chunks = []
+    chunks: list[bytes] = []
+    shown = 0
+
+    def text() -> str:
+        return b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
+
+    def emit(final: bool) -> None:
+        nonlocal shown
+        body = text()
+        limit = len(body) if final else body.rfind("\n") + 1
+        if limit <= shown:
+            return
+        chunk = body[shown:limit]
+        shown = limit
+        print(chunk, end="" if chunk.endswith("\n") else "\n", flush=True)
+
     while time.time() < end:
         block = port.read(4096)
         if not block:
-            text = b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
-            if _accepted(text):
+            if _accepted(text()):
                 break
             continue
         chunks.append(block)
-        text = b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
-        if _accepted(text):
+        emit(False)
+        if _accepted(text()):
             time.sleep(0.05)
             extra = port.read(4096)
             if extra:
                 chunks.append(extra)
+                emit(False)
             break
-    return b"".join(chunks).decode("utf-8", "replace").replace("\r", "").strip()
+    emit(True)
+    return text().strip()
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
+    print("Canal E0.", flush=True)
+    print(f"Prueba en {PORT} a {BAUD} baudios.", flush=True)
+    print("Abriendo el puerto. Eso reinicia la placa.", flush=True)
     port = serial.Serial(PORT, BAUD, timeout=0.3, write_timeout=2)
     time.sleep(1.0)
     port.reset_input_buffer()
     steps = [
         ("M114", 3),
         ("M302 S0", 3),
-        ("M906 E800", 3),
-        ("M500", 4),
+        ("T0", 3),
+        ("M906 T0 E800", 3),
+        ("M914 T0 E100", 3),
         ("M906", 3),
         ("M83", 3),
         ("G92 E150", 3),
@@ -69,16 +93,18 @@ def main() -> None:
         ("M400", 20),
         ("M114", 3),
         ("M122", 6),
+        ("M914", 3),
         ("M119", 3),
         ("M18", 3),
     ]
     for command, timeout in steps:
+        print(f"\n===== {command} =====", flush=True)
         body = transact(port, command, timeout)
-        print(f"\n===== {command} =====")
-        print(body or "(sin respuesta)")
+        if not body:
+            print("(sin respuesta)", flush=True)
         lowered = body.lower()
         if "unknown command" in lowered or "cold extrusion" in lowered or body.startswith("Error"):
-            print("DETENIDO")
+            print("DETENIDO", flush=True)
             break
     port.close()
 

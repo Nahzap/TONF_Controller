@@ -76,6 +76,14 @@ def _build() -> argparse.ArgumentParser:
     suite.add_argument("--listar", action="store_true", help="Muestra las señales y no abre el puerto.")
     suite.add_argument("--comandos", action="store_true", help="Muestra el G-code y no abre el puerto.")
 
+    menu = commands.add_parser(
+        "menu",
+        help="Menú serial: reconoce motores y mueve por pasos dentro del mínimo y máximo.",
+    )
+    menu.add_argument("--config", type=Path, help="Otro archivo TOML. Por defecto config/banco.toml.")
+    menu.add_argument("--puerto", help="Puerto COM. Por defecto el de config/banco.toml.")
+    menu.add_argument("--baud", type=int, help="Baudios. Por defecto el del archivo.")
+
     live = commands.add_parser(
         "indicadores",
         help="Mide enlace, latencia, finales y posición reportada.",
@@ -117,6 +125,8 @@ def main(argv: list[str] | None = None) -> int:
         return _enviar(args)
     if args.comando == "suite":
         return _suite(args)
+    if args.comando == "menu":
+        return _menu(args)
 
     if args.muestras < 1:
         print("--muestras tiene que ser al menos 1.")
@@ -158,6 +168,24 @@ def _suite(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(exc)
         return 2
+
+
+def _menu(args: argparse.Namespace) -> int:
+    from dataclasses import replace
+
+    from tonf.banco import ConfigError, load_path
+    from tonf.manual import run_menu
+
+    try:
+        bench = load_path(args.config)
+    except ConfigError as exc:
+        print(exc)
+        return 2
+    if args.puerto:
+        bench = replace(bench, puerto=args.puerto)
+    if args.baud:
+        bench = replace(bench, baud=args.baud)
+    return run_menu(bench)
 
 
 def _enviar(args: argparse.Namespace) -> int:

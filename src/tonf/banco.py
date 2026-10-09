@@ -89,6 +89,12 @@ class Bench:
     consulta_s: float
     guardar_s: float
     driver_s: float
+    paso_mm: float
+    avance_mm_min: float
+    avance_busqueda_mm_min: float
+    margen_mm: float
+    sonda_mm: float
+    sin_topes_mm: float
     secuencias: dict[str, tuple[Move, ...]]
     channels: tuple[Channel, ...]
 
@@ -175,6 +181,13 @@ def describe(bench: Bench, only: str | None = None) -> str:
         f"Retención compilada: {bench.retencion:g} de la corriente de marcha",
         f"Chopper compilado: {bench.chopper}",
         f"ENABLE activo en bajo: {'sí' if bench.enable_activo_bajo else 'no'}",
+        (
+            f"Calibración: paso {_num(bench.paso_mm)} mm, "
+            f"avance {_num(bench.avance_mm_min)} mm/min, "
+            f"margen {_num(bench.margen_mm)} mm, "
+            f"sonda {_num(bench.sonda_mm)} mm, "
+            f"sin topes {_num(bench.sin_topes_mm)} mm"
+        ),
         "",
     ]
     for channel in bench.ordered():
@@ -367,6 +380,7 @@ def _bench(raw: dict, path: Path) -> Bench:
     feeds = _table(raw, "avances_maximos_mm_s")
     limits = _table(raw, "limites_mm")
     times = _table(raw, "tiempos")
+    calibration = _calibration(_table(raw, "calibracion"))
     sequences = _sequences(_table(raw, "secuencia"))
     channels = _channels(_table(raw, "canales"), sequences)
     bench = Bench(
@@ -400,6 +414,12 @@ def _bench(raw: dict, path: Path) -> Bench:
         consulta_s=_float(times, "consulta_s", minimum=0.1),
         guardar_s=_float(times, "guardar_s", minimum=0.1),
         driver_s=_float(times, "driver_s", minimum=0.1),
+        paso_mm=calibration["paso_mm"],
+        avance_mm_min=calibration["avance_mm_min"],
+        avance_busqueda_mm_min=calibration["avance_busqueda_mm_min"],
+        margen_mm=calibration["margen_mm"],
+        sonda_mm=calibration["sonda_mm"],
+        sin_topes_mm=calibration["sin_topes_mm"],
         secuencias=sequences,
         channels=channels,
     )
@@ -407,6 +427,21 @@ def _bench(raw: dict, path: Path) -> Bench:
     _require_currents(bench, bench.ordered())
     _require_shared_extruder_steps(bench.ordered())
     return bench
+
+
+def _calibration(raw: dict) -> dict[str, float]:
+    values = {
+        "paso_mm": _float(raw, "paso_mm"),
+        "avance_mm_min": _float(raw, "avance_mm_min"),
+        "avance_busqueda_mm_min": _float(raw, "avance_busqueda_mm_min"),
+        "margen_mm": _float(raw, "margen_mm"),
+        "sonda_mm": _float(raw, "sonda_mm"),
+        "sin_topes_mm": _float(raw, "sin_topes_mm"),
+    }
+    for key, number in values.items():
+        if number <= 0:
+            raise ConfigError(f"calibracion.{key} tiene que ser mayor que 0.")
+    return values
 
 
 def _sequences(raw: dict) -> dict[str, tuple[Move, ...]]:
@@ -666,6 +701,14 @@ def _warnings(bench: Bench, channels: tuple[Channel, ...], moving: tuple[Channel
                 f"{'sí' if channel.interpolar else 'no'} están solo en el archivo. "
                 "La suite no los reprograma; el firmware compilado usa 16 micropasos con interpolación."
             )
+    feed = bench.avance_mm_min / 60.0
+    for axis in _LINEAR:
+        limit = bench.avances_mm_s[axis]
+        if feed > limit:
+            warnings.append(
+                f"La calibración pide {_num(bench.avance_mm_min)} mm/min y M203 de {axis} "
+                f"está en {_num(limit)} mm/s. Ese eje no puede usar ese avance."
+            )
     for channel in moving:
         limit = bench.avances_mm_s[channel.letra]
         for move in bench.secuencias[channel.secuencia]:
@@ -686,10 +729,24 @@ def _reject_forbidden(steps: list[Step]) -> None:
             raise ConfigError(f"La suite no puede enviar {head}.")
 
 
+def corriente_m906(channel: Channel) -> int:
+    """mA del M906 para que la bobina quede en corriente_ma.
+
+    TMCStepper calcula con la Rsense compilada más 0,02 Ω. En X esa Rsense
+    está en 0, así que un M906 800 deja el registro en 1/31 y la bobina en
+    unos 60 mA. Se escribe el número que, con la resistencia real del módulo,
+    produce la corriente del archivo.
+    """
+    firmware = channel.rsense_compilado_ohm + 0.02
+    real = channel.rsense_modulo_ohm + 0.02
+    return max(1, int(round(channel.corriente_ma * real / firmware)))
+
+
 def _m906(channel: Channel) -> str:
+    ma = corriente_m906(channel)
     if channel.letra == "E":
-        return f"M906 T{channel.herramienta} E{channel.corriente_ma}"
-    return f"M906 {channel.letra}{channel.corriente_ma}"
+        return f"M906 T{channel.herramienta} E{ma}"
+    return f"M906 {channel.letra}{ma}"
 
 
 def _m914(channel: Channel) -> str:

@@ -6,6 +6,7 @@ __pycache__/
 
 reports/
 firmware/
+config/calibracion/
 
 # Solo README.md entra al repositorio. El resto de la documentación se queda en la máquina.
 Docs/

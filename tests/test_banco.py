@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from tonf.banco import ConfigError, Step, build, execute, load_path, replace_channel
+from tonf.banco import ConfigError, Step, build, describe, execute, load_path, load_text, replace_channel
 from tonf.__main__ import main
 
 ROOT_CONFIG = load_path()
@@ -14,10 +14,32 @@ def _commands(program, group: str | None = None) -> list[str]:
     return [step.command for step in program.steps if group is None or step.group == group]
 
 
+def test_la_calibracion_sale_del_archivo():
+    assert ROOT_CONFIG.paso_mm == 30
+    assert ROOT_CONFIG.avance_busqueda_mm_min == 1800
+    assert ROOT_CONFIG.avance_mm_min == 300
+    assert ROOT_CONFIG.margen_mm == 2
+    assert ROOT_CONFIG.sonda_mm == 1
+    assert ROOT_CONFIG.sin_topes_mm == 10
+    text = describe(ROOT_CONFIG, "X")
+    assert "Calibración: paso 30 mm" in text
+
+
+def test_un_paso_de_calibracion_en_cero_no_carga():
+    source = ROOT_CONFIG.path.read_text(encoding="utf-8").replace("paso_mm = 30", "paso_mm = 0", 1)
+    with pytest.raises(ConfigError, match="paso_mm"):
+        load_text(source)
+
+
+def test_un_avance_de_calibracion_sobre_m203_avisa():
+    text = describe(replace(ROOT_CONFIG, avance_mm_min=10_000), "X")
+    assert "La calibración pide 10000 mm/min" in text
+
+
 def test_el_archivo_real_tiene_los_cinco_canales_en_orden():
     assert [channel.id for channel in ROOT_CONFIG.ordered()] == ["X", "Y", "Z", "E0", "E1"]
     currents = {channel.id: channel.corriente_ma for channel in ROOT_CONFIG.channels}
-    assert currents == {"X": 450, "Y": 800, "Z": 800, "E0": 800, "E1": 800}
+    assert currents == {"X": 800, "Y": 800, "Z": 800, "E0": 800, "E1": 800}
 
 
 def test_el_protocolo_de_x_sale_igual_que_la_prueba_en_vacio():
@@ -26,17 +48,17 @@ def test_el_protocolo_de_x_sale_igual_que_la_prueba_en_vacio():
         "G90",
         "G92 X150",
         "G91",
-        "G1 X10 F300",
-        "M400",
         "G1 X-10 F300",
         "M400",
-        "G1 X40 F600",
+        "G1 X10 F300",
         "M400",
         "G1 X-40 F600",
         "M400",
-        "G1 X40 F1800",
+        "G1 X40 F600",
         "M400",
         "G1 X-40 F1800",
+        "M400",
+        "G1 X40 F1800",
         "M400",
         "M114",
         "M122",
@@ -47,7 +69,7 @@ def test_el_protocolo_de_x_sale_igual_que_la_prueba_en_vacio():
 
 def test_e0_y_e1_se_mueven_con_su_nombre():
     commands = _commands(build(ROOT_CONFIG))
-    assert "M906 T0 E800" in commands
+    assert "M906 T0 E1268" in commands
     assert "M906 T1 E800" in commands
     assert "M906 E800" not in commands
     assert _commands(build(ROOT_CONFIG), "E0")[:3] == ["T0", "M83", "G92 E150"]
@@ -105,7 +127,7 @@ def test_un_canal_inactivo_no_se_mueve_y_su_corriente_si_se_escribe():
     bench = replace_channel(ROOT_CONFIG, "Y", activo=False)
     program = build(bench)
     assert "Y" not in {step.group for step in program.steps}
-    assert "M906 Y800" in _commands(program)
+    assert "M906 Y1268" in _commands(program)
 
 
 def test_un_error_de_la_placa_suelta_los_motores():
@@ -161,4 +183,5 @@ def test_listar_no_necesita_la_placa(capsys):
     output = capsys.readouterr().out
     assert "Canal E1" in output
     assert "CF3925-100-SL" in output
-    assert "450 mA" in output
+    assert "BJ42D29-16W01" in output
+    assert "800 mA" in output

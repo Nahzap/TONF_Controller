@@ -72,13 +72,13 @@ No entran al repositorio `Docs/`, `.venv/`, la caché de pytest, `reports/` ni `
 
 | Canal | Cómo se mueve | Motor | Corriente | Nominal de catálogo | Pasos/mm | DIR compilado |
 |---|---|---|---|---|---|---|
-| X | `G1 X`, `M906 X`, `M914 X` | Sin nombre de catálogo | 450 mA | — | 80 | invertido |
+| X | `G1 X`, `M906 X`, `M914 X` | BJ42D29-16W01 | 800 mA | el sufijo no publica amperios | 80 | invertido |
 | Y | `G1 Y`, `M906 Y`, `M914 Y` | CF3925-100-SL | 800 mA | no hay ficha | 80 | invertido |
 | Z | `G1 Z`, `M906 Z`, `M914 Z` | SY42STH38-1684A | 800 mA | 1680 mA por fase | 400 | directo |
 | E0 | `T0`, letra E, `M906 T0 E`, `M914 T0 E` | SY42STH38-1684A | 800 mA | 1680 mA por fase | 95 | invertido |
 | E1 | `T1`, letra E, `M906 T1 E`, `M914 T1 E` | CF3925-100-SL | 800 mA | no hay ficha | 95 | directo |
 
-X se dejó en 450 mA porque en el banco ese motor se movió entre 400 y 500 mA. Y, Z, E0 y E1 están en el tope de 800 mA. Z y E0 se nombraron en el banco como SY52STH38 1684A; el catálogo de 1,68 A por fase es el SY42STH38-1684A. Del CF3925-100-SL no hay corriente de fabricante en este banco. El cálculo de vueltas de ese modelo supone 1,8 ° por paso.
+X es el Creality BJ42D29-16W01, de 42×42×48 mm. Con 450 mA zumbó y no movió el eje, así que queda en el tope de 800 mA, igual que Y, Z, E0 y E1. Z y E0 se nombraron en el banco como SY52STH38 1684A; el catálogo de 1,68 A por fase es el SY42STH38-1684A. Del CF3925-100-SL no hay corriente de fabricante en este banco. El cálculo de vueltas de ese modelo supone 1,8 ° por paso.
 
 `M906 E800` sin índice escribe E0 y E1 a la vez. La suite manda `M906 T0 E800` y `M906 T1 E800`. E0 y E1 tienen que compartir `pasos_por_mm`: este firmware no compila `DISTINCT_E_FACTORS`, así que `M92 E` escribe los dos. Hoy los dos están en 95.
 
@@ -273,6 +273,8 @@ Hay dos clases de campos. «En vivo» significa que la próxima corrida de la su
 | `canales.*.rsense_*` | no | Registro. Ver la tabla de sensado |
 | `canales.*.step`, `dir`, `enable`, `uart`, `diag` | no | Pines. No se cambian desde aquí |
 | `maquina.retencion`, `chopper`, `plug`, `enable_activo_bajo` | no | Retención 0,5, chopper de 12 V, orden del plug y ENABLE activo en bajo |
+| `calibracion.paso_mm`, `avance_mm_min`, `margen_mm` | menú | Paso, avance y margen de la autocalibración. La suite en vacío no los manda |
+| `calibracion.sonda_mm`, `sin_topes_mm` | menú | Tope de la orden `P` y tope de cada `M` si el tramo no se midió en el metal |
 
 `avance_mm_min` de cada tramo es la letra F de Marlin, en mm/min. `avances_maximos_mm_s` es `M203`, en mm/s. 1800 mm/min son 30 mm/s.
 

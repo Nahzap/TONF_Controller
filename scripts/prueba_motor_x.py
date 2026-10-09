@@ -67,7 +67,7 @@ def main() -> None:
     port.reset_input_buffer()
     steps = [
         ("M114", 3),
-        ("M906 X450", 3),
+        ("M906 X800", 3),
         ("M914 X100", 3),
         ("M906", 3),
         ("G90", 3),

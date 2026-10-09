@@ -70,6 +70,23 @@ consulta_s = 3
 guardar_s = 4
 driver_s = 6
 
+[calibracion]
+# Lo lee el menú serial. La suite en vacío no manda estos números.
+# paso_mm: cada intento al buscar el máximo, desde el mínimo físico.
+#   Tiene que durar más que un M122: la carga se lee con el motor en marcha.
+#   30 mm a 1800 mm/min son un segundo. En X son 2400 pasos.
+# avance_mm_min: F de esa búsqueda, y de M, P y TOPE cuando la orden no trae F.
+# margen_mm: queda libre en cada extremo. El trabajo útil va de aquí hasta longitud menos margen.
+# sonda_mm: máximo de la orden P.
+# sin_topes_mm: máximo de cada M si se confirmó LIM sin haber medido el metal.
+paso_mm = 30
+avance_mm_min = 300
+# La búsqueda tiene que ir rápido: a 300 mm/min el DIAG no ve el golpe.
+avance_busqueda_mm_min = 1800
+margen_mm = 2
+sonda_mm = 1
+sin_topes_mm = 10
+
 # ---------------------------------------------------------------------------
 # Secuencia en vacío. La misma que ya corrió cada motor: ida y vuelta,
 # sin home. Un canal puede apuntar a otra secuencia con su campo `secuencia`.
@@ -129,14 +146,14 @@ espera_fin_s = 20
 orden = 1
 activo = true
 secuencia = "vacio"
-modelo = "Sin nombre de catálogo"
-nota = "Se dejó en 450 mA. En el banco el motor se movió en el rango de 400 a 500 mA."
+modelo = "BJ42D29-16W01"
+nota = "Creality 42×42×48 mm, 1,8°. El sufijo 16W01 no publica amperios; motores Creality de ese tamaño están en 1 A o 1,5 A. Con 450 mA el eje zumbó y no se movió. Se usa el tope del banco."
 letra = "X"
-corriente_ma = 450
+corriente_ma = 800
 pasos_por_mm = 80
 micropasos = 16
 grados_por_paso = 1.8
-sentido = 1
+sentido = -1
 sigilo = true
 sensibilidad_stall = 100
 dir_invertido_compilado = true

@@ -3,8 +3,9 @@
 En el TMC2209 el pin DIAG solo se activa en stealthChop, y Marlin además
 deja ese camino apagado fuera de un G28. Por eso un M119 durante un G1
 puede seguir en open con el carro ya contra el metal. La carga útil está
-en sg_result. En este firmware tstep se queda en max también en marcha,
-así que no sirve para saber si el eje se mueve. sg_result 0 es reposo.
+en sg_result. Con el eje en marcha, tstep trae un tiempo de paso; al
+terminar el G1 vuelve a max. Una carga baja en ese reposo es el fin de
+la orden, no el metal. sg_result 0 también es reposo.
 """
 
 from __future__ import annotations
@@ -25,9 +26,54 @@ def axis_stalled(body: str, axis: str) -> bool | None:
     return any(value.lower() == "triggered" for value in values)
 
 
+def espera_entre_muestras(feed: float, paso_mm: float | None, travel_s: float) -> float:
+    """Sin paso, la carga se lee seguido. Con paso, el eje corre ese tramo antes de cada lectura.
+
+    El tramo es el que ya movió el husillo sin interrogar al driver en medio.
+    """
+    if paso_mm is None or feed <= 0:
+        return 0.02
+    return min(paso_mm / feed * 60.0, max(travel_s, 0.02))
+
+
+def frena_si_sigue_en_marcha(caida: Caida, sg: int | None, moving: bool | None) -> bool:
+    """El reposo al terminar la orden no es el tope. tstep en max deja moving en False."""
+    if moving is False:
+        return False
+    return caida.toma(sg)
+
+
 def stalled_load(sg: int | None, umbral: int) -> bool:
     """True si la carga está entre 1 y el umbral. El 0 es el reposo, no el tope."""
     return sg is not None and 0 < sg < umbral
+
+
+class Caida:
+    """Tope si la carga baja del umbral, o si cae frente al pico de esa misma marcha."""
+
+    def __init__(self, umbral: int, fraccion: float, muestras: int, piso: int | None = None) -> None:
+        self.umbral = umbral
+        self.fraccion = fraccion
+        self.muestras = muestras
+        self.piso = umbral if piso is None else piso
+        self.pico = 0
+        self.seguidas = 0
+
+    def toma(self, sg: int | None) -> bool:
+        if sg is None or sg <= 0:
+            return False
+        if sg > self.pico:
+            self.pico = sg
+            self.seguidas = 0
+        if self.pico < self.piso:
+            return False
+        if sg < self.umbral:
+            return True
+        if sg < self.pico * self.fraccion:
+            self.seguidas += 1
+            return self.seguidas >= self.muestras
+        self.seguidas = 0
+        return False
 
 
 def load_sample(body: str, axis: str) -> tuple[int | None, bool | None]:

@@ -4,7 +4,17 @@ from dataclasses import replace
 
 import pytest
 
-from tonf.banco import ConfigError, Step, build, describe, execute, load_path, load_text, replace_channel
+from tonf.banco import (
+    ConfigError,
+    Step,
+    build,
+    corriente_m906,
+    describe,
+    execute,
+    load_path,
+    load_text,
+    replace_channel,
+)
 from tonf.__main__ import main
 
 ROOT_CONFIG = load_path()
@@ -21,6 +31,8 @@ def test_la_calibracion_sale_del_archivo():
     assert ROOT_CONFIG.margen_mm == 2
     assert ROOT_CONFIG.sonda_mm == 1
     assert ROOT_CONFIG.sin_topes_mm == 10
+    assert ROOT_CONFIG.fraccion_caida == 0.75
+    assert ROOT_CONFIG.muestras_caida == 1
     text = describe(ROOT_CONFIG, "X")
     assert "Calibración: paso 30 mm" in text
 
@@ -39,7 +51,7 @@ def test_un_avance_de_calibracion_sobre_m203_avisa():
 def test_el_archivo_real_tiene_los_cinco_canales_en_orden():
     assert [channel.id for channel in ROOT_CONFIG.ordered()] == ["X", "Y", "Z", "E0", "E1"]
     currents = {channel.id: channel.corriente_ma for channel in ROOT_CONFIG.channels}
-    assert currents == {"X": 800, "Y": 800, "Z": 800, "E0": 800, "E1": 800}
+    assert currents == {"X": 800, "Y": 800, "Z": 450, "E0": 800, "E1": 800}
 
 
 def test_el_protocolo_de_x_sale_igual_que_la_prueba_en_vacio():
@@ -185,4 +197,18 @@ def test_listar_no_necesita_la_placa(capsys):
     assert "CF3925-100-SL" in output
     assert "BJ42D29-16W01" in output
     assert "BJ42D15-26V09" in output
+    assert next(channel.partida for channel in ROOT_CONFIG.channels if channel.id == "Y") == "libre"
+    assert next(channel.partida for channel in ROOT_CONFIG.channels if channel.id == "Z") == "libre"
+    z = next(channel for channel in ROOT_CONFIG.channels if channel.id == "Z")
+    assert z.fraccion_caida == 0.45
+    assert z.sigilo is False
+    assert z.m906_ma is None
+    assert z.corriente_tope_ma == 200
+    assert z.corriente_ma == 450
+    assert corriente_m906(z) == 713
+    assert corriente_m906(replace(z, corriente_ma=200)) == 317
+    assert z.piso_marcha == 15
+    assert z.sensibilidad_stall == 12
+    assert z.paso_sondeo_mm == 40
+    assert next(channel.partida for channel in ROOT_CONFIG.channels if channel.id == "X") == "minimo"
     assert "800 mA" in output

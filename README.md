@@ -74,11 +74,11 @@ No entran al repositorio `Docs/`, `.venv/`, la caché de pytest, `reports/` ni `
 |---|---|---|---|---|---|---|
 | X | `G1 X`, `M906 X`, `M914 X` | BJ42D29-16W01 | 800 mA | el sufijo no publica amperios | 80 | invertido |
 | Y | `G1 Y`, `M906 Y`, `M914 Y` | BJ42D15-26V09 | 800 mA | 840 mA por fase | 80 | invertido |
-| Z | `G1 Z`, `M906 Z`, `M914 Z` | SY42STH38-1684A | 800 mA | 1680 mA por fase | 400 | directo |
+| Z | `G1 Z`, `M906 Z`, `M914 Z` | stepper de baja potencia | 450 mA | 450 mA, bobina 45 Ω | 400 | directo |
 | E0 | `T0`, letra E, `M906 T0 E`, `M914 T0 E` | SY42STH38-1684A | 800 mA | 1680 mA por fase | 95 | invertido |
 | E1 | `T1`, letra E, `M906 T1 E`, `M914 T1 E` | CF3925-100-SL | 800 mA | no hay ficha | 95 | directo |
 
-X es el Creality BJ42D29-16W01, de 42×42×48 mm. Con 450 mA zumbó y no movió el eje, así que queda en el tope de 800 mA, igual que Z, E0 y E1. Y es el Creality BJ42D15-26V09, de 42×42×34 mm y 0,84 A de catálogo; la consigna queda en 800 mA porque el techo del banco no deja pasar 840. Z y E0 se nombraron en el banco como SY52STH38 1684A; el catálogo de 1,68 A por fase es el SY42STH38-1684A. Del CF3925-100-SL de E1 no hay corriente de fabricante en este banco. El cálculo de vueltas de ese modelo supone 1,8 ° por paso.
+X es el Creality BJ42D29-16W01, de 42×42×48 mm. Con 450 mA zumbó y no movió el eje, así que queda en el tope de 800 mA, igual que E0 y E1. Y es el Creality BJ42D15-26V09, de 42×42×34 mm y 0,84 A de catálogo; la consigna queda en 800 mA porque el techo del banco no deja pasar 840. Z es un stepper de baja potencia, 92 mm de extensión, y puede estar en cualquier punto del husillo. Cada bobina mide 45 Ω. El motor admite 450 mA, pero a 12 V la bobina se queda cerca de 270 mA y la fuente marca unos 160 mA, con el PWM del driver al máximo. E0 sigue con el SY42STH38-1684A. Del CF3925-100-SL de E1 no hay corriente de fabricante en este banco. El cálculo de vueltas de ese modelo supone 1,8 ° por paso.
 
 `M906 E800` sin índice escribe E0 y E1 a la vez. La suite manda `M906 T0 E800` y `M906 T1 E800`. E0 y E1 tienen que compartir `pasos_por_mm`: este firmware no compila `DISTINCT_E_FACTORS`, así que `M92 E` escribe los dos. Hoy los dos están en 95.
 

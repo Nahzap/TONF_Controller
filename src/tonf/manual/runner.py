@@ -98,6 +98,13 @@ def run_menu(bench: Bench) -> int:
         print(f"===== {command} =====", flush=True)
         return transact(port, command, timeout, 0.05)
 
+    def vigilar(command: str, timeout: float, vigia) -> str:
+        print(f"===== {command} =====", flush=True)
+        return transact(port, command, timeout, 0.05, vigia)
+
+    send.vigilar = vigilar
+    send.puerto = port
+
     def write(text: str) -> None:
         print(text, flush=True)
 

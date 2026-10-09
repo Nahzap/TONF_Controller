@@ -230,7 +230,9 @@ def test_calibrar_guarda_el_json_y_bloquea_en_el_medio(tmp_path):
     assert record.maximo_mecanico_mm == 20
     assert record.margen_mm == session.bench.margen_mm
     assert record.bloqueado is True
-    assert _g1(-10, session.bench.avance_mm_min) in sent
+    feed = session.bench.avance_busqueda_mm_min
+    assert _g1(-20, feed) in sent
+    assert _g1(-10, feed) in sent
     assert "G1 X0 F300" in sent
     assert "M906 X4550" in sent
     assert "M17" in sent

@@ -9,7 +9,7 @@
 puerto = "COM3"
 baud = 115200
 # Abrir el COM reinicia el LPC1769 (DTR). Esta espera deja pasar el arranque.
-espera_apertura_s = 1.0
+espera_apertura_s = 3.0
 
 [alimentacion]
 vmot_v = 12.0
@@ -83,6 +83,9 @@ paso_mm = 30
 avance_mm_min = 300
 # La búsqueda tiene que ir rápido: a 300 mm/min el DIAG no ve el golpe.
 avance_busqueda_mm_min = 1800
+# Si la carga de marcha ya se vio, una caída a esta fracción del pico, repetida, es el tope.
+fraccion_caida = 0.75
+muestras_caida = 1
 margen_mm = 2
 sonda_mm = 1
 sin_topes_mm = 10
@@ -173,14 +176,15 @@ orden = 2
 activo = true
 secuencia = "vacio"
 modelo = "BJ42D15-26V09"
-nota = "Creality 42×42×34 mm, 1,8°. Catálogo Keli 0,84 A. El techo del banco es 800 mA, así que la consigna queda en el tope."
+nota = "Creality 42×42×34 mm, 1,8°. Catálogo Keli 0,84 A. El techo del banco es 800 mA, así que la consigna queda en el tope. Puede partir en cualquier punto del riel: primero se busca el máximo y después el mínimo."
 corriente_nominal_ma = 840
+partida = "libre"
 letra = "Y"
 corriente_ma = 800
 pasos_por_mm = 80
 micropasos = 16
 grados_por_paso = 1.8
-sentido = 1
+sentido = -1
 sigilo = true
 sensibilidad_stall = 100
 dir_invertido_compilado = true
@@ -199,17 +203,29 @@ diag = "P1.28 Y-STOP"
 orden = 3
 activo = true
 secuencia = "vacio"
-modelo = "SY42STH38-1684A"
-nota = "En el banco se nombró SY52STH38 1684A. El catálogo de 1,68 A por fase es SY42STH38-1684A. La suite no pasa de 800 mA."
+modelo = "stepper-baja-potencia"
+nota = "Stepper de baja potencia. Cada bobina mide 45 Ω. A 12 V la bobina no pasa de unos 270 mA; la fuente ve cerca de 160 mA con el PWM en 255. La consigna queda en 450 mA, que es el máximo del motor, aunque el banco no puede entregarla. Extensión 92 mm. Puede partir en cualquier punto del husillo."
+partida = "libre"
+fraccion_caida = 0.45
 letra = "Z"
-corriente_nominal_ma = 1680
-corriente_ma = 800
+corriente_nominal_ma = 450
+corriente_ma = 450
 pasos_por_mm = 400
 micropasos = 16
 grados_por_paso = 1.8
-sentido = 1
-sigilo = true
-sensibilidad_stall = 100
+sentido = -1
+# spreadCycle: en sigilo el PWM ya está en 255 y subir M906 no cambia la marcha.
+sigilo = false
+# En el tope la corriente no pasa de 200 mA. En marcha la bobina queda en 450 mA.
+corriente_tope_ma = 200
+# La marcha de Z se queda en 64–72. El umbral de X/Y (100) no sirve: el tope tiene que caer de esa banda.
+piso_marcha = 15
+# 40 mm a 600 mm/min duran 4 s: el M122 alcanza a leer con el husillo todavía empujando.
+paso_sondeo_mm = 40
+# En sentido negativo la marcha ya está en 18–24. 50 cortaba la corriente en pleno avance.
+sensibilidad_stall = 12
+# A 300 mm/min la carga no baja del tope. 600 mm/min le da fuerza contraelectromotriz.
+avance_mm_min = 600
 dir_invertido_compilado = false
 driver = "TMC2209"
 uart_direccion = 0
@@ -227,7 +243,7 @@ orden = 4
 activo = true
 secuencia = "vacio"
 modelo = "SY42STH38-1684A"
-nota = "Mismo motor que Z. Este canal es E0: herramienta T0 y letra E."
+nota = "Canal E0, herramienta T0 y letra E. No es el motor de Z."
 letra = "E"
 herramienta = 0
 corriente_nominal_ma = 1680

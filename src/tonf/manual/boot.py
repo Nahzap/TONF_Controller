@@ -8,11 +8,19 @@ from datetime import datetime
 
 from tonf.banco import corriente_m906
 from tonf.manual.calibrate import Calibrator, Sample
-from tonf.manual.frame import to_marlin
+from tonf.manual.drivers import parse_m114
+from tonf.manual.frame import to_logical, to_marlin
 from tonf.manual.model import Call, Plan, num
-from tonf.manual.pace import move_timeout, sequence_wait
+from tonf.manual.pace import move_timeout, sequence_wait, tramos_mm
 from tonf.manual.runner import execute_detail, execute_plan
-from tonf.manual.stall import axis_stalled, load_sample, stalled_load
+from tonf.manual.stall import (
+    Caida,
+    axis_stalled,
+    espera_entre_muestras,
+    frena_si_sigue_en_marcha,
+    load_sample,
+    stalled_load,
+)
 from tonf.manual.steps import legal_steps
 from tonf.manual.store import Record, load_record, record_path, save_record
 from tonf.manual.travel import current_calls, locked_calls
@@ -177,8 +185,8 @@ def install(session, record: Record) -> None:
 
 def prepare(session, send, read, write) -> int | None:
     session.margin_mm = session.bench.margen_mm
-    write("El carro tiene que estar en el mínimo físico. Ese punto es el inicio.")
-    write("El punto medio es la mitad entre el inicio y el fin. No lo marca el atasco.")
+    write("Un canal en el mínimo usa ese punto como inicio. Uno libre puede partir en cualquier lugar.")
+    write("El libre busca primero el máximo y después el mínimo. El punto medio queda entre esos dos topes.")
     while True:
         choice = ask_axis(read, write)
         if choice is None:
@@ -202,7 +210,11 @@ def prepare(session, send, read, write) -> int | None:
             if existing is None:
                 write("RECHAZADO indique corriente mA, inicio mm y fin mm. Ejemplo: X 800 0 300")
                 continue
-            return _finish_saved(session, existing, send, write)
+            held = _finish_saved(session, existing, send, write)
+            if held is not None:
+                return held
+            write(f"Sigue {choice.axis}. Indique el siguiente eje, o CERRAR.")
+            continue
         if choice.force and path.is_file():
             write(f"AVISO se repite la calibración de {choice.axis}.")
         record = _place_declared(session, choice, send, write)
@@ -210,7 +222,10 @@ def prepare(session, send, read, write) -> int | None:
             return 1
         save_record(path, record)
         write(f"OK calibración guardada en {path}.")
-        return _finish_saved(session, record, send, write)
+        held = _finish_saved(session, record, send, write)
+        if held is not None:
+            return held
+        write(f"Sigue {choice.axis}. Indique el siguiente eje, o CERRAR.")
 
 
 def _finish_saved(session, record: Record, send, write) -> int | None:
@@ -229,40 +244,60 @@ def _place_declared(session, choice: Choice, send, write) -> Record | None:
     adjusted = replace(channel, corriente_ma=choice.corriente_ma)
     state.corriente_ma = choice.corriente_ma
     state.m906_ma = corriente_m906(adjusted)
+    _armar_freno(send, state, channel)
     state.current_set = False
+    pause = session.bench.consulta_s
+    preparar = []
+    if channel.arranque_mm_s2 is not None:
+        preparar.append(Call(f"M201 {state.letra}{num(channel.arranque_mm_s2)}", pause))
     inicio = choice.inicio_mm
     fin = choice.fin_mm
     medio = (inicio + fin) / 2.0
     margen = session.bench.margen_mm
-    feed = session.bench.avance_mm_min
-    pause = session.bench.consulta_s
-    distance = medio - inicio
-    timeout = move_timeout(distance, feed, pause, sequence_wait(session.bench, choice.axis))
+    techo_avance = session.bench.avances_mm_s[state.letra] * 60.0
+    feed = min(session.bench.avance_busqueda_mm_min, techo_avance)
+    if channel.avance_mm_min is not None:
+        feed = min(feed, channel.avance_mm_min)
+    elif state.pasos_por_mm >= 400:
+        feed = min(feed, session.bench.avance_mm_min)
     write(
         f"{choice.axis}: corriente {choice.corriente_ma} mA, "
-        f"tramo {num(inicio)}…{num(fin)} mm, punto medio {num(medio)} mm."
+        f"tramo declarado {num(inicio)}…{num(fin)} mm."
     )
-    plan = Plan(
-        [f"Se va al punto medio {num(medio)} mm. El inicio queda en {num(inicio)} mm."],
+    if channel.partida == "libre":
+        return _place_libre(session, choice, state, fin - inicio, feed, pause, margen, preparar, send, write)
+    write(f"Punto medio declarado {num(medio)} mm.")
+    if not _travel_to(
+        session,
+        state,
+        fin,
+        fin - inicio,
+        feed,
         [
+            *preparar,
             *current_calls(session, state),
             Call("G90", pause),
             Call(f"G92 {state.letra}{num(to_marlin(inicio, state.signo))}", pause),
-            Call(
-                f"G1 {state.letra}{num(to_marlin(medio, state.signo))} F{num(feed)}",
-                timeout,
-            ),
         ],
-    )
-    detail = execute_detail(session, plan, send)
-    stalled = False
-    if not detail.halted:
-        stalled = _watch_travel(session, state, distance, feed, send, write)
-    for line in detail.replies:
-        write(line)
-    if detail.halted or stalled:
-        write("RECHAZADO no llegó al punto medio declarado. La corriente sigue aplicada.")
+        f"Se recorre hasta el fin {num(fin)} mm. Después se vuelve al punto medio {num(medio)} mm.",
+        "no llegó al fin declarado",
+        send,
+        write,
+    ):
         return None
+    if not _travel_to(
+        session,
+        state,
+        medio,
+        fin - medio,
+        feed,
+        [Call("G90", pause)],
+        f"Fin en {num(fin)} mm. Se va al punto medio {num(medio)} mm.",
+        "el regreso al punto medio se frenó",
+        send,
+        write,
+    ):
+        write(f"AVISO {choice.axis} ya recorrió hasta el fin. Se sigue con el siguiente eje.")
     length = fin - inicio
     return Record(
         eje=choice.axis,
@@ -283,26 +318,381 @@ def _place_declared(session, choice: Choice, send, write) -> Record | None:
     )
 
 
-def _watch_travel(session, state, distance_mm: float, feed: float, send, write) -> bool:
-    """True si el eje atasca antes de terminar el tramo. La corriente sigue."""
+def _place_libre(session, choice: Choice, state, alcance: float, feed: float, pause: float, margen: float, preparar: list, send, write) -> Record | None:
+    write(
+        f"{choice.axis} puede partir en cualquier punto. "
+        f"Primero el máximo, en el sentido {state.signo:+d}. Después el mínimo."
+    )
+    if not _buscar_tope(
+        session,
+        state,
+        alcance,
+        alcance,
+        feed,
+        [
+            *preparar,
+            *current_calls(session, state),
+            Call("G90", pause),
+            Call(f"G92 {state.letra}0", pause),
+        ],
+        f"Busca el máximo, hasta {num(alcance)} mm desde donde está.",
+        send,
+        write,
+    ):
+        write("RECHAZADO no apareció el máximo. La corriente sigue aplicada.")
+        return None
+    maximo = _leer_logico(session, state, send, write)
+    if maximo is None:
+        return None
+    write(f"Máximo a {num(maximo)} mm de la partida.")
+    if not _buscar_tope(
+        session,
+        state,
+        maximo - alcance,
+        alcance,
+        feed,
+        [Call("G90", pause)],
+        f"Busca el mínimo, hasta {num(alcance)} mm en el sentido contrario.",
+        send,
+        write,
+    ):
+        write("RECHAZADO no apareció el mínimo. La corriente sigue aplicada.")
+        return None
+    minimo = _leer_logico(session, state, send, write)
+    if minimo is None:
+        return None
+    largo = maximo - minimo
+    if largo <= margen * 2:
+        write("RECHAZADO los dos topes quedaron demasiado juntos. La corriente sigue aplicada.")
+        return None
+    medio = (maximo + minimo) / 2.0
+    write(f"Mínimo a {num(minimo)} mm de la partida. Longitud medida {num(largo)} mm.")
+    paso = next((item.paso_sondeo_mm for item in session.bench.channels if item.id == choice.axis), None)
+    if paso is not None:
+        if not _volver_sin_lectura(session, state, medio - minimo, feed, paso, send, write):
+            return None
+    elif not _travel_to(
+        session,
+        state,
+        medio,
+        abs(medio - minimo),
+        feed,
+        [Call("G90", pause)],
+        f"Se va al punto medio {num(medio - minimo)} mm desde el mínimo.",
+        "no llegó al punto medio",
+        send,
+        write,
+    ):
+        return None
+    desde_el_minimo = medio - minimo
+    detail = execute_detail(
+        session,
+        Plan(
+            [],
+            [Call(f"G92 {state.letra}{num(to_marlin(desde_el_minimo, state.signo))}", pause)],
+        ),
+        send,
+    )
+    for line in detail.replies:
+        write(line)
+    if detail.halted:
+        return None
+    return Record(
+        eje=choice.axis,
+        fecha=datetime.now().astimezone().isoformat(timespec="seconds"),
+        pasos_por_mm=state.pasos_por_mm,
+        sentido=state.signo,
+        corriente_ma=choice.corriente_ma,
+        margen_mm=margen,
+        minimo_mecanico_mm=0.0,
+        maximo_mecanico_mm=largo,
+        minimo_trabajo_mm=margen,
+        maximo_trabajo_mm=largo - margen,
+        longitud_mm=largo,
+        punto_medio_mm=largo / 2.0,
+        pasos_entre_topes=legal_steps(largo, state.pasos_por_mm),
+        umbral_stall=state.sensibilidad_stall,
+        bloqueado=True,
+    )
+
+
+def _paso_sondeo(session, state) -> float | None:
+    for channel in session.bench.channels:
+        if channel.id == state.axis_id:
+            return channel.paso_sondeo_mm
+    return None
+
+
+def _buscar_tope(session, state, mm: float, distance: float, feed: float, prefix: list, message: str, send, write) -> bool:
+    paso = _paso_sondeo(session, state)
+    if paso is not None:
+        return _buscar_por_pasos(session, state, mm, distance, feed, prefix, message, paso, send, write)
+    pause = session.bench.consulta_s
+    timeout = move_timeout(distance, feed, pause, sequence_wait(session.bench, state.axis_id))
+    plan = Plan(
+        [message],
+        [*prefix, Call(f"G1 {state.letra}{num(to_marlin(mm, state.signo))} F{num(feed)}", timeout)],
+    )
+    detail = execute_detail(session, plan, send)
+    stalled = False
+    if not detail.halted:
+        stalled = _watch_travel(session, state, distance, feed, send, write, buscar=True)
+    for line in detail.replies:
+        write(line)
+    return (not detail.halted) and stalled
+
+
+def _caida_de(session, state) -> Caida:
+    fraccion = session.bench.fraccion_caida
+    piso = state.sensibilidad_stall
+    for channel in session.bench.channels:
+        if channel.id != state.axis_id:
+            continue
+        if channel.fraccion_caida is not None:
+            fraccion = channel.fraccion_caida
+        if channel.piso_marcha is not None:
+            piso = channel.piso_marcha
+    return Caida(state.sensibilidad_stall, fraccion, session.bench.muestras_caida, piso)
+
+
+def _buscar_por_pasos(session, state, mm: float, distance: float, feed: float, prefix: list, message: str, paso: float, send, write) -> bool:
+    """Busca el metal de a un tramo. El reposo al acabar la orden no cuenta como tope."""
+    pause = session.bench.consulta_s
+    detail = execute_detail(session, Plan([message], list(prefix)), send)
+    for line in detail.replies:
+        write(line)
+    if detail.halted:
+        return False
+    origen = _leer_logico(session, state, send, write)
+    if origen is None:
+        return False
+    sentido = 1 if mm >= origen else -1
+    caida = _caida_de(session, state)
+    recorrido = 0.0
+    while recorrido + 1e-6 < distance:
+        tramo = min(paso, distance - recorrido)
+        destino = origen + sentido * (recorrido + tramo)
+        timeout = move_timeout(tramo, feed, pause, sequence_wait(session.bench, state.axis_id))
+        detail = execute_detail(
+            session,
+            Plan(
+                [],
+                [
+                    Call("G90", pause),
+                    Call(f"M906 {state.letra}{state.m906_ma}", pause),
+                    Call(f"G1 {state.letra}{num(to_marlin(destino, state.signo))} F{num(feed)}", timeout),
+                ],
+            ),
+            send,
+        )
+        for line in detail.replies:
+            write(line)
+        if detail.halted:
+            return False
+        if feed > 0:
+            time.sleep(min(tramo / feed * 60.0 * 0.2, 0.4))
+
+        def decidir(sg: int | None, moving: bool | None = None) -> bool:
+            return frena_si_sigue_en_marcha(caida, sg, moving)
+
+        try:
+            body = _leer_carga(send, state.axis_id, pause, decidir, write)
+        except Exception:
+            if getattr(send, "frenado", False):
+                write(f"{state.axis_id} se frenó al ver el tope. Después se cortó el puerto.")
+                return True
+            return _frenar(session, send, write, f"{state.axis_id} perdió el puerto contra el recorrido.")
+        if getattr(send, "frenado", False):
+            write(f"Tope de {state.axis_id}. El freno salió al leer la caída.")
+            return True
+        if getattr(send, "vigilar", None) is None:
+            text = body if isinstance(body, str) else str(body)
+            sg, moving = load_sample(text, state.axis_id)
+            if sg is not None:
+                write(f"{state.axis_id} sg {sg}")
+            if decidir(sg, moving):
+                return _frenar(session, send, write, f"StallGuard {state.axis_id} {sg}, pico {caida.pico}.")
+        try:
+            send("M400", timeout)
+            _corriente_de_reposo(session, send)
+        except Exception:
+            return _frenar(session, send, write, f"{state.axis_id} perdió el puerto al cerrar el tramo.")
+        recorrido += tramo
+    _corriente_de_reposo(session, send)
+    return False
+
+
+def _leer_logico(session, state, send, write) -> float | None:
+    try:
+        body = send("M114", session.bench.consulta_s)
+    except Exception:
+        write("RECHAZADO no se pudo leer la posición del tope.")
+        return None
+    marlin = parse_m114(str(body)).get(state.letra)
+    if marlin is None:
+        write(f"RECHAZADO M114 no trajo {state.letra}.")
+        return None
+    return to_logical(marlin, state.signo)
+
+
+def _volver_sin_lectura(session, state, distancia_mm: float, feed: float, paso: float, send, write) -> bool:
+    """Regreso al medio sin M122. Leer el driver en ese tramo deja el husillo en el extremo."""
+    pause = session.bench.consulta_s
+    marlin = to_marlin(distancia_mm, state.signo)
+    write(
+        f"Vuelve {num(abs(distancia_mm))} mm al punto medio, "
+        f"en tramos de {num(paso)} mm, sin leer el driver."
+    )
+    calls = [Call(f"M906 {state.letra}{state.m906_ma}", pause), Call("G91", pause)]
+    for tramo in tramos_mm(marlin, paso):
+        timeout = move_timeout(abs(tramo), feed, pause, sequence_wait(session.bench, state.axis_id))
+        calls.append(Call(f"G1 {state.letra}{num(tramo)} F{num(feed)}", timeout))
+        calls.append(Call("M400", timeout))
+    calls.append(Call("G90", pause))
+    detail = execute_detail(session, Plan([], calls), send)
+    for line in detail.replies:
+        write(line)
+    if detail.halted:
+        write("RECHAZADO no llegó al punto medio. La corriente sigue aplicada.")
+        return False
+    _corriente_de_reposo(session, send)
+    return True
+
+
+def _travel_to(session, state, mm: float, distance: float, feed: float, prefix: list, message: str, failure: str, send, write) -> bool:
+    pause = session.bench.consulta_s
+    timeout = move_timeout(distance, feed, pause, sequence_wait(session.bench, state.axis_id))
+    plan = Plan(
+        [message],
+        [
+            *prefix,
+            Call(f"G1 {state.letra}{num(to_marlin(mm, state.signo))} F{num(feed)}", timeout),
+        ],
+    )
+    detail = execute_detail(session, plan, send)
+    stalled = False
+    if not detail.halted:
+        stalled = _watch_travel(session, state, distance, feed, send, write, buscar=False)
+    for line in detail.replies:
+        write(line)
+    if detail.halted or stalled:
+        write(f"RECHAZADO {failure}. La corriente sigue aplicada.")
+        return False
+    return True
+
+
+def _orden_tope(state, channel) -> str | None:
+    if channel.corriente_tope_ma is None:
+        return None
+    ma = corriente_m906(replace(channel, corriente_ma=channel.corriente_tope_ma))
+    return f"M906 {state.letra}{ma}\n"
+
+
+def _armar_freno(send, state, channel) -> None:
+    orden = _orden_tope(state, channel)
+    puerto = getattr(send, "puerto", None)
+    if orden is None or puerto is None:
+        return
+    puerto.al_frenar = orden.encode("ascii")
+
+
+def _corriente_de_reposo(session, send) -> None:
+    """Parado no se queda en la corriente de marcha."""
+    puerto = getattr(send, "puerto", None)
+    orden = getattr(puerto, "al_frenar", None) if puerto is not None else None
+    if not orden:
+        return
+    texto = orden.decode("ascii").strip() if isinstance(orden, bytes) else str(orden).strip()
+    send(texto, session.bench.consulta_s)
+
+
+def _frenar(session, send, write, motivo: str) -> bool:
+    try:
+        puerto = getattr(send, "puerto", None)
+        orden = getattr(puerto, "al_frenar", None) if puerto is not None else None
+        if orden:
+            send(orden.decode("ascii").strip(), session.bench.consulta_s)
+        send("M410", session.bench.consulta_s)
+        send("M17", session.bench.consulta_s)
+        write(f"{motivo} Se frena y la corriente de tope no pasa de la consigna.")
+    except Exception:
+        write(f"{motivo} Se cortó el puerto antes de poder frenar.")
+    return True
+
+
+def _leer_carga(send, axis: str, timeout: float, decidir, write):
+    """M122. Si el puerto sabe vigilar, el M410 sale al leer sg_result, sin esperar el resto.
+
+    decidir recibe la carga y si el eje sigue en marcha. El reposo no es tope.
+    """
+    vigilar = getattr(send, "vigilar", None)
+    if vigilar is None:
+        return send("M122", timeout)
+    acum: list[str] = []
+
+    def vigia(line: str) -> bool:
+        acum.append(line)
+        if "sg_result" not in line.lower():
+            return False
+        sg, moving = load_sample("\n".join(acum), axis)
+        if sg is not None:
+            write(f"{axis} sg {sg}")
+        return decidir(sg, moving)
+
+    body = vigilar("M122", timeout, vigia)
+    puerto = getattr(send, "puerto", None)
+    send.frenado = bool(getattr(puerto, "frenado", False))
+    return body
+
+
+def _watch_travel(session, state, distance_mm: float, feed: float, send, write, buscar: bool) -> bool:
+    """True si el eje atasca antes de terminar el tramo. La corriente sigue.
+
+    En una búsqueda de tope, una caída frente al pico también frena.
+    En un fin ya declarado, solo frena si la carga baja del umbral.
+    """
     travel = 0.0 if feed <= 0 else abs(distance_mm) / feed * 60.0
     deadline = time.monotonic() + travel + 0.25
-    time.sleep(min(travel * 0.25, 0.2))
+    fraccion = session.bench.fraccion_caida
+    for channel in session.bench.channels:
+        if channel.id == state.axis_id and channel.fraccion_caida is not None:
+            fraccion = channel.fraccion_caida
+    piso = state.sensibilidad_stall
+    paso = None
+    for channel in session.bench.channels:
+        if channel.id != state.axis_id:
+            continue
+        if channel.piso_marcha is not None:
+            piso = channel.piso_marcha
+        paso = channel.paso_sondeo_mm
+    caida = Caida(state.sensibilidad_stall, fraccion, session.bench.muestras_caida, piso)
+    espera = espera_entre_muestras(feed, paso, travel)
+
+    def decidir(sg: int | None, moving: bool | None = None) -> bool:
+        if moving is False:
+            return False
+        if buscar:
+            return frena_si_sigue_en_marcha(caida, sg, moving)
+        return stalled_load(sg, state.sensibilidad_stall)
+    time.sleep(min(espera, travel) if paso is not None else min(travel * 0.25, 0.2))
     while time.monotonic() < deadline:
-        body = send("M122", session.bench.consulta_s)
+        try:
+            body = _leer_carga(send, state.axis_id, session.bench.consulta_s, decidir, write)
+        except Exception:
+            if getattr(send, "frenado", False):
+                write(f"{state.axis_id} se frenó al ver el tope. Después se cortó el puerto.")
+                return True
+            return _frenar(session, send, write, f"{state.axis_id} perdió el puerto contra el recorrido.")
+        if getattr(send, "frenado", False):
+            write(f"Tope de {state.axis_id}. El freno salió al leer la caída.")
+            return True
         text = body if isinstance(body, str) else str(body)
-        sg, _moving = load_sample(text, state.axis_id)
+        sg, moving = load_sample(text, state.axis_id)
         if sg is not None:
             write(f"{state.axis_id} sg {sg}")
-        if stalled_load(sg, state.sensibilidad_stall):
-            send("M410", session.bench.consulta_s)
-            send("M17", session.bench.consulta_s)
-            write(
-                f"StallGuard {state.axis_id} {sg} bajo {state.sensibilidad_stall}. "
-                "Se frena y se sostiene la corriente."
-            )
-            return True
-        time.sleep(0.02)
+        if decidir(sg, moving):
+            return _frenar(session, send, write, f"StallGuard {state.axis_id} {sg}, pico {caida.pico}.")
+        time.sleep(espera)
     body = send("M119", session.bench.consulta_s)
     text = body if isinstance(body, str) else str(body)
     stalled = axis_stalled(text, state.axis_id)
@@ -338,6 +728,7 @@ def _while_moving(session, routine: Calibrator, send, write) -> Sample:
     """Lee la carga mientras el paso sigue en marcha. En reposo sg_result es 0."""
     travel = routine.step_mm / routine.feed * 60.0
     deadline = time.monotonic() + travel + 0.25
+    caida = Caida(routine.umbral_stall, session.bench.fraccion_caida, session.bench.muestras_caida)
     time.sleep(travel * 0.25)
     while time.monotonic() < deadline:
         body = send("M122", session.bench.consulta_s)
@@ -345,11 +736,11 @@ def _while_moving(session, routine: Calibrator, send, write) -> Sample:
         sg, _moving = load_sample(text, routine.axis)
         if sg is not None:
             write(f"{routine.axis} sg {sg}")
-        if stalled_load(sg, routine.umbral_stall):
+        if caida.toma(sg):
             send("M410", session.bench.consulta_s)
             send("M17", session.bench.consulta_s)
             write(
-                f"StallGuard {routine.axis} {sg} bajo {routine.umbral_stall}. "
+                f"StallGuard {routine.axis} {sg}, pico {caida.pico}. "
                 "Se frena y se sostiene la corriente."
             )
             return Sample(True, True)

@@ -55,6 +55,14 @@ class Channel:
     uart: str
     diag: str
     origen_mm: float | None
+    partida: str = "minimo"
+    fraccion_caida: float | None = None
+    arranque_mm_s2: float | None = None
+    avance_mm_min: float | None = None
+    m906_ma: int | None = None
+    piso_marcha: int | None = None
+    paso_sondeo_mm: float | None = None
+    corriente_tope_ma: int | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +100,8 @@ class Bench:
     paso_mm: float
     avance_mm_min: float
     avance_busqueda_mm_min: float
+    fraccion_caida: float
+    muestras_caida: int
     margen_mm: float
     sonda_mm: float
     sin_topes_mm: float
@@ -318,12 +328,14 @@ def open_port(puerto: str, baud: int, espera_s: float):
     return port
 
 
-def transact(port, command: str, timeout_s: float, settle_s: float = 0.05) -> str:
+def transact(port, command: str, timeout_s: float, settle_s: float = 0.05, vigia=None) -> str:
     port.write((command + "\n").encode("ascii"))
     port.flush()
     end = time.time() + timeout_s
     chunks: list[bytes] = []
     shown = 0
+    scanned = 0
+    port.frenado = False
 
     def text() -> str:
         return b"".join(chunks).decode("utf-8", "replace").replace("\r", "")
@@ -338,13 +350,46 @@ def transact(port, command: str, timeout_s: float, settle_s: float = 0.05) -> st
         shown = limit
         print(chunk, end="" if chunk.endswith("\n") else "\n", flush=True)
 
+    def frenar_si_cae() -> None:
+        nonlocal scanned
+        if vigia is None or port.frenado:
+            return
+        body = text()
+        cut = body.rfind("\n") + 1
+        if cut <= scanned:
+            return
+        fresh = body[scanned:cut]
+        scanned = cut
+        for line in fresh.split("\n"):
+            if not vigia(line):
+                continue
+            bajar = getattr(port, "al_frenar", None)
+            if bajar:
+                bruto = bajar if isinstance(bajar, bytes) else str(bajar).encode("ascii")
+                port.write(bruto)
+                port.flush()
+                print(f"===== {bruto.decode('ascii').strip()} =====", flush=True)
+            port.write(b"M410\n")
+            port.flush()
+            port.write(b"M17\n")
+            port.flush()
+            port.frenado = True
+            print("===== M410 =====\n===== M17 =====", flush=True)
+            return
+
     while time.time() < end:
-        block = port.read(4096)
+        try:
+            block = port.read(4096)
+        except Exception:
+            if port.frenado:
+                break
+            raise
         if not block:
             if _accepted(text()):
                 break
             continue
         chunks.append(block)
+        frenar_si_cae()
         emit(False)
         if _accepted(text()):
             if settle_s:
@@ -352,6 +397,7 @@ def transact(port, command: str, timeout_s: float, settle_s: float = 0.05) -> st
             extra = port.read(4096)
             if extra:
                 chunks.append(extra)
+                frenar_si_cae()
                 emit(False)
             break
     emit(True)
@@ -417,6 +463,8 @@ def _bench(raw: dict, path: Path) -> Bench:
         paso_mm=calibration["paso_mm"],
         avance_mm_min=calibration["avance_mm_min"],
         avance_busqueda_mm_min=calibration["avance_busqueda_mm_min"],
+        fraccion_caida=calibration["fraccion_caida"],
+        muestras_caida=int(calibration["muestras_caida"]),
         margen_mm=calibration["margen_mm"],
         sonda_mm=calibration["sonda_mm"],
         sin_topes_mm=calibration["sin_topes_mm"],
@@ -434,6 +482,8 @@ def _calibration(raw: dict) -> dict[str, float]:
         "paso_mm": _float(raw, "paso_mm"),
         "avance_mm_min": _float(raw, "avance_mm_min"),
         "avance_busqueda_mm_min": _float(raw, "avance_busqueda_mm_min"),
+        "fraccion_caida": _float(raw, "fraccion_caida"),
+        "muestras_caida": float(_int(raw, "muestras_caida", minimum=1)),
         "margen_mm": _float(raw, "margen_mm"),
         "sonda_mm": _float(raw, "sonda_mm"),
         "sin_topes_mm": _float(raw, "sin_topes_mm"),
@@ -441,6 +491,8 @@ def _calibration(raw: dict) -> dict[str, float]:
     for key, number in values.items():
         if number <= 0:
             raise ConfigError(f"calibracion.{key} tiene que ser mayor que 0.")
+    if not values["fraccion_caida"] < 1:
+        raise ConfigError("calibracion.fraccion_caida tiene que ser menor que 1.")
     return values
 
 
@@ -504,6 +556,36 @@ def _channels(raw: dict, sequences: dict[str, tuple[Move, ...]]) -> tuple[Channe
         if direction not in (1, -1):
             raise ConfigError(f"{name}: sentido tiene que ser 1 o -1.")
         nominal = body.get("corriente_nominal_ma")
+        partida = str(body.get("partida", "minimo"))
+        if partida not in {"minimo", "libre"}:
+            raise ConfigError(f"{name}: partida tiene que ser minimo o libre.")
+        fraccion_eje = body.get("fraccion_caida")
+        if fraccion_eje is not None:
+            fraccion_eje = _float(body, "fraccion_caida")
+            if not 0 < fraccion_eje < 1:
+                raise ConfigError(f"{name}: fraccion_caida tiene que estar entre 0 y 1.")
+        arranque = body.get("arranque_mm_s2")
+        if arranque is not None:
+            arranque = _float(body, "arranque_mm_s2")
+            if arranque <= 0:
+                raise ConfigError(f"{name}: arranque_mm_s2 tiene que ser mayor que 0.")
+        avance_propio = body.get("avance_mm_min")
+        if avance_propio is not None:
+            avance_propio = _float(body, "avance_mm_min")
+            if avance_propio <= 0:
+                raise ConfigError(f"{name}: avance_mm_min tiene que ser mayor que 0.")
+        m906_directo = body.get("m906_ma")
+        if m906_directo is not None:
+            m906_directo = _int(body, "m906_ma", minimum=1)
+        piso = body.get("piso_marcha")
+        if piso is not None:
+            piso = _int(body, "piso_marcha", minimum=1)
+        paso_sondeo = body.get("paso_sondeo_mm")
+        if paso_sondeo is not None:
+            paso_sondeo = _float(body, "paso_sondeo_mm", minimum=0.1)
+        tope_ma = body.get("corriente_tope_ma")
+        if tope_ma is not None:
+            tope_ma = _int(body, "corriente_tope_ma", minimum=1)
         channels.append(
             Channel(
                 id=name,
@@ -534,6 +616,14 @@ def _channels(raw: dict, sequences: dict[str, tuple[Move, ...]]) -> tuple[Channe
                 uart=_text(body, "uart"),
                 diag=_text(body, "diag"),
                 origen_mm=None if "origen_mm" not in body else _float(body, "origen_mm"),
+                partida=partida,
+                fraccion_caida=None if fraccion_eje is None else float(fraccion_eje),
+                arranque_mm_s2=None if arranque is None else float(arranque),
+                avance_mm_min=None if avance_propio is None else float(avance_propio),
+                m906_ma=None if m906_directo is None else int(m906_directo),
+                piso_marcha=None if piso is None else int(piso),
+                paso_sondeo_mm=None if paso_sondeo is None else float(paso_sondeo),
+                corriente_tope_ma=None if tope_ma is None else int(tope_ma),
             )
         )
     orders = [channel.orden for channel in channels]

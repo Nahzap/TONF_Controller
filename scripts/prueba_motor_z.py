@@ -1,7 +1,7 @@
-"""Prueba en vacío del motor de Z (SY42STH38-1684A). No hace home.
+"""Prueba en vacío del motor de Z. No hace home.
 
-El motor admite 1,68 A por fase. La corriente queda en 800 mA, el tope
-de protección.
+Stepper de baja potencia. Cada bobina mide 45 Ω. La consigna es 450 mA.
+M906 lleva el número compensado por la Rsense. A 12 V la bobina no alcanza esos 450 mA.
 
 Uso, desde D:\\TONF_Controller:
 
@@ -70,7 +70,7 @@ def main() -> None:
     port.reset_input_buffer()
     steps = [
         ("M114", 3),
-        ("M906 Z800", 3),
+        ("M906 Z713", 3),
         ("M914 Z100", 3),
         ("M500", 4),
         ("M906", 3),

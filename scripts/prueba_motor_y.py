@@ -1,6 +1,6 @@
-"""Prueba en vacío del motor de Y (CF3925-100-SL). No hace home.
+"""Prueba en vacío del motor de Y (BJ42D15-26V09). No hace home.
 
-La corriente de Y queda en 800 mA, el tope de protección.
+La corriente de Y queda en 800 mA, el tope de protección. El catálogo es 840 mA.
 
 Uso, desde D:\\TONF_Controller:
 

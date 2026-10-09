@@ -184,4 +184,5 @@ def test_listar_no_necesita_la_placa(capsys):
     assert "Canal E1" in output
     assert "CF3925-100-SL" in output
     assert "BJ42D29-16W01" in output
+    assert "BJ42D15-26V09" in output
     assert "800 mA" in output

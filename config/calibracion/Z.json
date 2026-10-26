@@ -1,0 +1,17 @@
+{
+  "eje": "Z",
+  "fecha": "2026-10-09T19:08:36-03:00",
+  "pasos_por_mm": 400.0,
+  "sentido": -1,
+  "corriente_ma": 800,
+  "margen_mm": 2.0,
+  "minimo_mecanico_mm": 0.0,
+  "maximo_mecanico_mm": 92.0,
+  "minimo_trabajo_mm": 2.0,
+  "maximo_trabajo_mm": 90.0,
+  "longitud_mm": 92.0,
+  "punto_medio_mm": 46.0,
+  "pasos_entre_topes": 36800,
+  "umbral_stall": 12,
+  "bloqueado": true
+}

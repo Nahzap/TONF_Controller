@@ -8,7 +8,7 @@ El archivo que se edita para cambiar corrientes, avances, sentidos, umbral Stall
 
 Repositorio: https://github.com/Nahzap/TONF_Controller.git
 
-Este README es el documento de operación. Las notas con fecha y hora viven en `Docs/` y no forman parte del repositorio. La nota de este estado es `Docs/2026-10-05_1825_avances-suite-terminal.md`.
+Este README es el documento de operación. Las notas con fecha y hora viven en `Docs/`. La nota de este estado es `Docs/2026-10-05_1825_avances-suite-terminal.md`.
 
 El 5 de octubre de 2026, a las 18:25, la suite ya informaba por la terminal mientras corría y los cinco motores se movían.
 
@@ -60,11 +60,13 @@ scripts/prueba_motor_*.py  prueba de un canal. Son los programas base
 BKP/                       copia vigente de esos cinco programas
 src/tonf/                  enlace, medidas y la suite
 tests/                     pruebas del programa, sin abrir la placa
-Docs/                      notas locales con fecha y hora
-firmware/Marlin            fuente local de Marlin 2.1.2, fuera del repositorio
+Docs/                      notas con fecha y hora
+reports/                   informes medidos en la placa
+config/calibracion/        json de X, Y y Z
+firmware/Marlin            fuente de Marlin 2.1.2 y el firmware.bin grabado
 ```
 
-No entran al repositorio `Docs/`, `.venv/`, la caché de pytest, `reports/` ni `firmware/`.
+No entran al repositorio `.venv/`, la caché de pytest ni `firmware/Marlin/.pio/`. Esa carpeta la vuelve a crear PlatformIO al compilar.
 
 ## Motores y corrientes
 
@@ -143,13 +145,13 @@ No mandar `M104`, `M109`, `M140` ni `M190`. Los termistores son ficticios.
 
 ### Grabar otro firmware.bin
 
-El fuente no está en el repositorio. En la máquina de trabajo vive en `firmware/Marlin`, entorno PlatformIO `LPC1769`. Desde esa carpeta, el PlatformIO del proyecto es:
+El fuente está en `firmware/Marlin`, entorno PlatformIO `LPC1769`. El binario grabado el 5 de octubre de 2026, de 206024 bytes, está en `firmware/Marlin/firmware.bin`. Para compilar otro, desde esa carpeta:
 
 ```powershell
-D:\TONF_Controller\.venv\Scripts\pio.exe run -e LPC1769
+pio run -e LPC1769
 ```
 
-El binario sale en `firmware/Marlin/.pio/build/LPC1769/firmware.bin`.
+El binario nuevo sale en `firmware/Marlin/.pio/build/LPC1769/firmware.bin`.
 
 La grabación que funcionó en esta placa:
 
